@@ -61,7 +61,8 @@ def forecast_sklearn(model, last_row, n_days, features):
     predictions = []
     current = last_row[features].copy()
     for _ in range(n_days):
-        pred = model.predict(current.values.reshape(1, -1))[0]
+        pred = model.predict(
+            current.values.reshape(1, -1))[0]
         predictions.append(pred)
         current['Close_lag3'] = current['Close_lag2']
         current['Close_lag2'] = current['Close_lag1']
@@ -69,21 +70,15 @@ def forecast_sklearn(model, last_row, n_days, features):
     return predictions
 
 def download_stock_data(ticker, start, retries=3):
-    """Download with retries and multiple methods"""
     for attempt in range(retries):
         try:
-            # Method 1 — standard download
             df = yf.download(
-                ticker,
-                start=start,
-                end=None,
-                auto_adjust=True,
-                progress=False,
+                ticker, start=start, end=None,
+                auto_adjust=True, progress=False,
                 timeout=30
             )
             if len(df) > 100:
                 df.reset_index(inplace=True)
-                # Flatten multi-index columns
                 df.columns = [
                     c[0] if isinstance(c, tuple) else c
                     for c in df.columns
@@ -91,9 +86,7 @@ def download_stock_data(ticker, start, retries=3):
                 return df
         except Exception as e:
             print(f"Attempt {attempt+1} failed: {e}")
-
         try:
-            # Method 2 — using Ticker object
             t = yf.Ticker(ticker)
             df = t.history(start=start, auto_adjust=True)
             if len(df) > 100:
@@ -102,201 +95,107 @@ def download_stock_data(ticker, start, retries=3):
                     c[0] if isinstance(c, tuple) else c
                     for c in df.columns
                 ]
-                # Rename index to Date if needed
-                if 'index' in df.columns:
-                    df.rename(
-                        columns={'index': 'Date'}, inplace=True
-                    )
                 return df
         except Exception as e:
             print(f"Method 2 attempt {attempt+1} failed: {e}")
-
-    return pd.DataFrame()  # empty if all fail
+    return pd.DataFrame()
 
 def run_predictions():
     all_rows = []
     metrics_rows = []
 
     for name, ticker in TICKERS.items():
-        print(f"\nProcessing {name} ({ticker})...")
-
-        # Download data
+        print(f"\nProcessing {name}...")
         df = download_stock_data(ticker, START_DATE)
 
         if df.empty or len(df) < 200:
-            print(f"❌ Insufficient data for {name}")
+            print(f"Insufficient data for {name}")
             continue
 
-        print(f"✅ Downloaded {len(df)} rows for {name}")
-
-        # Ensure Date column is datetime
         df['Date'] = pd.to_datetime(df['Date'])
-
-        # Feature engineering
         df = add_features(df)
 
         if len(df) < 100:
-            print(f"❌ Not enough rows after feature engineering for {name}")
             continue
 
-        # Train/test split 80/20
         split = int(len(df) * 0.8)
         train = df.iloc[:split]
         test  = df.iloc[split:]
+        X_tr  = train[FEATURES]
+        y_tr  = train['Close']
+        X_te  = test[FEATURES]
+        y_te  = test['Close']
 
-        X_tr = train[FEATURES]
-        y_tr = train['Close']
-        X_te = test[FEATURES]
-        y_te = test['Close']
+        # ── All 4 models ──────────────────────────
+        models = {
+            'KNN': KNeighborsRegressor(n_neighbors=5),
+            'Linear Regression': LinearRegression(),
+            'XGBoost': XGBRegressor(
+                n_estimators=200, max_depth=5,
+                learning_rate=0.1, random_state=42,
+                verbosity=0
+            )
+        }
 
-        # Train XGBoost
-        model = XGBRegressor(
-            n_estimators=200,
-            max_depth=5,
-            learning_rate=0.1,
-            random_state=42,
-            verbosity=0
-        )
-        model.fit(X_tr, y_tr)
-        y_pred = model.predict(X_te)
+        best_model = None
+        best_r2 = -999
 
-        # Metrics
-        rmse = float(np.sqrt(mean_squared_error(y_te, y_pred)))
-        r2   = float(r2_score(y_te, y_pred))
-        mape = float(
-            np.mean(np.abs((y_te.values - y_pred) / y_te.values)) * 100
-        )
+        for model_name, model in models.items():
+            model.fit(X_tr, y_tr)
+            y_pred = model.predict(X_te)
 
-        metrics_rows.append({
-            'Stock':    name,
-            'Model':    'XGBoost',
-            'RMSE':     round(rmse, 4),
-            'R2_Score': round(r2, 4),
-            'MAPE_Pct': round(mape, 2)
-        })
+            rmse = float(np.sqrt(
+                mean_squared_error(y_te, y_pred)))
+            r2   = float(r2_score(y_te, y_pred))
+            mape = float(np.mean(
+                np.abs((y_te.values - y_pred)
+                       / y_te.values)) * 100)
 
-        # Historical predictions
-        for date, actual, pred in zip(
-            test['Date'].values, y_te.values, y_pred
-        ):
-            all_rows.append({
-                'Date':            pd.Timestamp(date).strftime('%Y-%m-%d'),
-                'Stock':           name,
-                'Type':            'Historical Prediction',
-                'Model':           'XGBoost',
-                'Actual_Close':    round(float(actual), 2),
-                'Predicted_Close': round(float(pred), 2),
-                'RMSE':            round(rmse, 4),
-                'R2':              round(r2, 4),
-                'MAPE':            round(mape, 2),
-                'Last_Updated':    datetime.now().strftime('%Y-%m-%d %H:%M')
+            metrics_rows.append({
+                'Stock':    name,
+                'Model':    model_name,
+                'RMSE':     round(rmse, 4),
+                'R2_Score': round(r2, 4),
+                'MAPE_Pct': round(mape, 2)
             })
 
-        # 30-day future forecast
+            # Historical predictions
+            for date, actual, pred in zip(
+                test['Date'].values,
+                y_te.values,
+                y_pred
+            ):
+                all_rows.append({
+                    'Date': pd.Timestamp(date).strftime(
+                        '%Y-%m-%d'),
+                    'Stock':           name,
+                    'Type':            'Historical Prediction',
+                    'Model':           model_name,
+                    'Actual_Close':    round(float(actual), 2),
+                    'Predicted_Close': round(float(pred), 2),
+                    'RMSE':            round(rmse, 4),
+                    'R2':              round(r2, 4),
+                    'MAPE':            round(mape, 2),
+                    'Last_Updated':    datetime.now().strftime(
+                        '%Y-%m-%d %H:%M')
+                })
+
+            # Track best model for forecast
+            if r2 > best_r2:
+                best_r2    = r2
+                best_model = model
+                best_name  = model_name
+
+        # ── 30-day forecast using best model ──────
+        print(f"{name}: best model = {best_name} R²={best_r2:.4f}")
         last_row  = df.iloc[-1]
         last_date = last_row['Date']
         future_preds = forecast_sklearn(
-            model, last_row, 30, FEATURES
-        )
+            best_model, last_row, 30, FEATURES)
         future_dates = pd.bdate_range(
-            start=pd.Timestamp(last_date) + pd.Timedelta(days=1),
+            start=pd.Timestamp(last_date)
+                  + pd.Timedelta(days=1),
             periods=30
         )
 
-        for date, pred in zip(future_dates, future_preds):
-            all_rows.append({
-                'Date':            str(date.date()),
-                'Stock':           name,
-                'Type':            'Future Forecast',
-                'Model':           'XGBoost',
-                'Actual_Close':    0,
-                'Predicted_Close': round(float(pred), 2),
-                'RMSE':            round(rmse, 4),
-                'R2':              round(r2, 4),
-                'MAPE':            round(mape, 2),
-                'Last_Updated':    datetime.now().strftime('%Y-%m-%d %H:%M')
-            })
-
-        print(f"✅ {name} done — {len(all_rows)} total rows so far")
-
-    return all_rows, metrics_rows
-
-# ── Endpoints ──────────────────────────────────────
-
-@app.route('/')
-def home():
-    return jsonify({
-        'status':    'running ✅',
-        'endpoints': {
-            'predictions': '/predictions',
-            'metrics':     '/metrics',
-            'forecast':    '/forecast',
-            'historical':  '/historical'
-        }
-    })
-
-@app.route('/predictions')
-def get_predictions():
-    try:
-        rows, _ = run_predictions()
-        stock = request.args.get('stock')
-        if stock:
-            rows = [r for r in rows if r['Stock'] == stock]
-        response = app.response_class(
-            response=json.dumps(rows),
-            status=200,
-            mimetype='application/json'
-        )
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        return response
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/metrics')
-def get_metrics():
-    try:
-        _, metrics = run_predictions()
-        response = app.response_class(
-            response=json.dumps(metrics),
-            status=200,
-            mimetype='application/json'
-        )
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        return response
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/forecast')
-def get_forecast():
-    try:
-        rows, _ = run_predictions()
-        data = [r for r in rows if r['Type'] == 'Future Forecast']
-        response = app.response_class(
-            response=json.dumps(data),
-            status=200,
-            mimetype='application/json'
-        )
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        return response
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/historical')
-def get_historical():
-    try:
-        rows, _ = run_predictions()
-        data = [r for r in rows
-                if r['Type'] == 'Historical Prediction']
-        response = app.response_class(
-            response=json.dumps(data),
-            status=200,
-            mimetype='application/json'
-        )
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        return response
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+        for date, pred in zip(future_dates,

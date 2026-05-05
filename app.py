@@ -7,7 +7,6 @@ import ta
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.model_selection import GridSearchCV
 from sklearn.preprocessing import MinMaxScaler
 from xgboost import XGBRegressor
 import json, os
@@ -16,7 +15,6 @@ from datetime import datetime
 app = Flask(__name__)
 CORS(app)
 
-# ── Config ─────────────────────────────────────────
 TICKERS = {'Netflix': 'NFLX', 'Walmart': 'WMT', 'Apple': 'AAPL'}
 START_DATE = '2015-01-01'
 FEATURES = [
@@ -29,7 +27,6 @@ FEATURES = [
     'Open', 'High', 'Low', 'Volume'
 ]
 
-# ── Feature engineering (same as your notebook) ────
 def add_features(df):
     df = df.copy().sort_values('Date').reset_index(drop=True)
     df['Close_lag1'] = df['Close'].shift(1)
@@ -40,26 +37,26 @@ def add_features(df):
     df['Volatility'] = df['Close'].rolling(5).std()
     df['MA_20']      = df['Close'].rolling(20).mean()
     df['MA_50']      = df['Close'].rolling(50).mean()
-    df['RSI_14']     = ta.momentum.RSIIndicator(df['Close'], window=14).rsi()
+    df['RSI_14']     = ta.momentum.RSIIndicator(
+                           df['Close'], window=14).rsi()
     macd = ta.trend.MACD(df['Close'])
     df['MACD']        = macd.macd()
     df['MACD_signal'] = macd.macd_signal()
     df['MACD_diff']   = macd.macd_diff()
     bb = ta.volatility.BollingerBands(df['Close'], window=20)
-    df['BB_upper']   = bb.bollinger_hband()
-    df['BB_lower']   = bb.bollinger_lband()
-    df['BB_width']   = bb.bollinger_wband()
-    df['Volume_change']      = df['Volume'].pct_change()
-    df['Price_momentum_5']   = df['Close'] - df['Close'].shift(5)
-    df['Price_momentum_10']  = df['Close'] - df['Close'].shift(10)
-    df['Daily_return']       = df['Close'].pct_change()
-    df['Day_of_week']        = df['Date'].dt.dayofweek
-    df['Month']              = df['Date'].dt.month
-    df['Quarter']            = df['Date'].dt.quarter
+    df['BB_upper']  = bb.bollinger_hband()
+    df['BB_lower']  = bb.bollinger_lband()
+    df['BB_width']  = bb.bollinger_wband()
+    df['Volume_change']     = df['Volume'].pct_change()
+    df['Price_momentum_5']  = df['Close'] - df['Close'].shift(5)
+    df['Price_momentum_10'] = df['Close'] - df['Close'].shift(10)
+    df['Daily_return']      = df['Close'].pct_change()
+    df['Day_of_week']       = df['Date'].dt.dayofweek
+    df['Month']             = df['Date'].dt.month
+    df['Quarter']           = df['Date'].dt.quarter
     df.dropna(inplace=True)
     return df
 
-# ── Forecast helper (same as your notebook) ────────
 def forecast_sklearn(model, last_row, n_days, features):
     predictions = []
     current = last_row[features].copy()
@@ -71,36 +68,88 @@ def forecast_sklearn(model, last_row, n_days, features):
         current['Close_lag1'] = pred
     return predictions
 
-# ── Core prediction function ───────────────────────
+def download_stock_data(ticker, start, retries=3):
+    """Download with retries and multiple methods"""
+    for attempt in range(retries):
+        try:
+            # Method 1 — standard download
+            df = yf.download(
+                ticker,
+                start=start,
+                end=None,
+                auto_adjust=True,
+                progress=False,
+                timeout=30
+            )
+            if len(df) > 100:
+                df.reset_index(inplace=True)
+                # Flatten multi-index columns
+                df.columns = [
+                    c[0] if isinstance(c, tuple) else c
+                    for c in df.columns
+                ]
+                return df
+        except Exception as e:
+            print(f"Attempt {attempt+1} failed: {e}")
+
+        try:
+            # Method 2 — using Ticker object
+            t = yf.Ticker(ticker)
+            df = t.history(start=start, auto_adjust=True)
+            if len(df) > 100:
+                df.reset_index(inplace=True)
+                df.columns = [
+                    c[0] if isinstance(c, tuple) else c
+                    for c in df.columns
+                ]
+                # Rename index to Date if needed
+                if 'index' in df.columns:
+                    df.rename(
+                        columns={'index': 'Date'}, inplace=True
+                    )
+                return df
+        except Exception as e:
+            print(f"Method 2 attempt {attempt+1} failed: {e}")
+
+    return pd.DataFrame()  # empty if all fail
+
 def run_predictions():
     all_rows = []
     metrics_rows = []
 
     for name, ticker in TICKERS.items():
-        print(f"Processing {name}...")
+        print(f"\nProcessing {name} ({ticker})...")
 
-        # Download live data
-        df = yf.download(
-            ticker, start=START_DATE,
-            end=None, auto_adjust=True
-        )
-        df.reset_index(inplace=True)
-        df.columns = [
-            c[0] if isinstance(c, tuple) else c
-            for c in df.columns
-        ]
+        # Download data
+        df = download_stock_data(ticker, START_DATE)
+
+        if df.empty or len(df) < 200:
+            print(f"❌ Insufficient data for {name}")
+            continue
+
+        print(f"✅ Downloaded {len(df)} rows for {name}")
+
+        # Ensure Date column is datetime
+        df['Date'] = pd.to_datetime(df['Date'])
 
         # Feature engineering
         df = add_features(df)
 
-        # Train/test split
+        if len(df) < 100:
+            print(f"❌ Not enough rows after feature engineering for {name}")
+            continue
+
+        # Train/test split 80/20
         split = int(len(df) * 0.8)
         train = df.iloc[:split]
         test  = df.iloc[split:]
-        X_tr, y_tr = train[FEATURES], train['Close']
-        X_te, y_te = test[FEATURES],  test['Close']
 
-        # Train XGBoost (fastest, best performer)
+        X_tr = train[FEATURES]
+        y_tr = train['Close']
+        X_te = test[FEATURES]
+        y_te = test['Close']
+
+        # Train XGBoost
         model = XGBRegressor(
             n_estimators=200,
             max_depth=5,
@@ -114,7 +163,9 @@ def run_predictions():
         # Metrics
         rmse = float(np.sqrt(mean_squared_error(y_te, y_pred)))
         r2   = float(r2_score(y_te, y_pred))
-        mape = float(np.mean(np.abs((y_te - y_pred) / y_te)) * 100)
+        mape = float(
+            np.mean(np.abs((y_te.values - y_pred) / y_te.values)) * 100
+        )
 
         metrics_rows.append({
             'Stock':    name,
@@ -144,7 +195,9 @@ def run_predictions():
         # 30-day future forecast
         last_row  = df.iloc[-1]
         last_date = last_row['Date']
-        future_preds = forecast_sklearn(model, last_row, 30, FEATURES)
+        future_preds = forecast_sklearn(
+            model, last_row, 30, FEATURES
+        )
         future_dates = pd.bdate_range(
             start=pd.Timestamp(last_date) + pd.Timedelta(days=1),
             periods=30
@@ -164,13 +217,16 @@ def run_predictions():
                 'Last_Updated':    datetime.now().strftime('%Y-%m-%d %H:%M')
             })
 
+        print(f"✅ {name} done — {len(all_rows)} total rows so far")
+
     return all_rows, metrics_rows
 
-# ── API Endpoints ──────────────────────────────────
+# ── Endpoints ──────────────────────────────────────
+
 @app.route('/')
 def home():
     return jsonify({
-        'status':    'running',
+        'status':    'running ✅',
         'endpoints': {
             'predictions': '/predictions',
             'metrics':     '/metrics',
@@ -214,9 +270,9 @@ def get_metrics():
 def get_forecast():
     try:
         rows, _ = run_predictions()
-        forecast = [r for r in rows if r['Type'] == 'Future Forecast']
+        data = [r for r in rows if r['Type'] == 'Future Forecast']
         response = app.response_class(
-            response=json.dumps(forecast),
+            response=json.dumps(data),
             status=200,
             mimetype='application/json'
         )
@@ -229,9 +285,10 @@ def get_forecast():
 def get_historical():
     try:
         rows, _ = run_predictions()
-        historical = [r for r in rows if r['Type'] == 'Historical Prediction']
+        data = [r for r in rows
+                if r['Type'] == 'Historical Prediction']
         response = app.response_class(
-            response=json.dumps(historical),
+            response=json.dumps(data),
             status=200,
             mimetype='application/json'
         )

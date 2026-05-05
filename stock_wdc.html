@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Stock Predictions Live</title>
+  <script src="https://connectors.tableau.com/libs/tableauwdc-2.3.latest.js">
+  </script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 500px;
+      margin: 60px auto;
+      text-align: center;
+      background: #f5f5f5;
+    }
+    h2 { color: #2c3e50; }
+    button {
+      background: #e8762d;
+      color: white;
+      border: none;
+      padding: 14px 32px;
+      font-size: 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+    button:hover { background: #cf5f1f; }
+    .status {
+      margin-top: 16px;
+      color: #666;
+      font-size: 14px;
+    }
+  </style>
+  <script>
+    // ✅ This URL never changes — your Render.com API
+    const API_URL = "https://YOUR-APP-NAME.onrender.com";
+
+    var myConnector = tableau.makeConnector();
+
+    myConnector.getSchema = function(schemaCallback) {
+      var predCols = [
+        {id:"Date",            alias:"Date",
+         dataType:tableau.dataTypeEnum.date},
+        {id:"Stock",           alias:"Stock",
+         dataType:tableau.dataTypeEnum.string},
+        {id:"Type",            alias:"Type",
+         dataType:tableau.dataTypeEnum.string},
+        {id:"Model",           alias:"Model",
+         dataType:tableau.dataTypeEnum.string},
+        {id:"Actual_Close",    alias:"Actual Close",
+         dataType:tableau.dataTypeEnum.float},
+        {id:"Predicted_Close", alias:"Predicted Close",
+         dataType:tableau.dataTypeEnum.float},
+        {id:"RMSE",            alias:"RMSE",
+         dataType:tableau.dataTypeEnum.float},
+        {id:"R2",              alias:"R2 Score",
+         dataType:tableau.dataTypeEnum.float},
+        {id:"MAPE",            alias:"MAPE",
+         dataType:tableau.dataTypeEnum.float},
+        {id:"Last_Updated",    alias:"Last Updated",
+         dataType:tableau.dataTypeEnum.string}
+      ];
+
+      var metricsCols = [
+        {id:"Stock",    alias:"Stock",
+         dataType:tableau.dataTypeEnum.string},
+        {id:"Model",    alias:"Model",
+         dataType:tableau.dataTypeEnum.string},
+        {id:"RMSE",     alias:"RMSE",
+         dataType:tableau.dataTypeEnum.float},
+        {id:"R2_Score", alias:"R2 Score",
+         dataType:tableau.dataTypeEnum.float},
+        {id:"MAPE_Pct", alias:"MAPE %",
+         dataType:tableau.dataTypeEnum.float}
+      ];
+
+      schemaCallback([
+        {
+          id:      "predictions",
+          alias:   "Stock Predictions",
+          columns: predCols
+        },
+        {
+          id:      "metrics",
+          alias:   "Model Metrics",
+          columns: metricsCols
+        }
+      ]);
+    };
+
+    myConnector.getData = function(table, doneCallback) {
+      var endpoint = table.tableInfo.id === "predictions"
+        ? "/predictions"
+        : "/metrics";
+
+      fetch(API_URL + endpoint, {
+        headers: {'Accept': 'application/json'}
+      })
+      .then(function(response) { return response.json(); })
+      .then(function(data) {
+        table.appendRows(data);
+        doneCallback();
+      })
+      .catch(function(err) {
+        console.error("Error:", err);
+        document.getElementById('status').innerText =
+          "❌ Error connecting to API. Is Render.com running?";
+        doneCallback();
+      });
+    };
+
+    tableau.registerConnector(myConnector);
+
+    function startConnector() {
+      document.getElementById('status').innerText =
+        "⏳ Connecting to live API...";
+      tableau.connectionName = "Stock Market Live Predictions";
+      tableau.submit();
+    }
+  </script>
+</head>
+<body>
+  <h2>📈 Stock Market Predictions</h2>
+  <p>Live data from Netflix, Walmart & Apple</p>
+  <p>Powered by XGBoost + yfinance</p>
+  <button onclick="startConnector()">
+    Connect Live Data to Tableau
+  </button>
+  <p class="status" id="status">
+    Ready to connect
+  </p>
+</body>
+</html>

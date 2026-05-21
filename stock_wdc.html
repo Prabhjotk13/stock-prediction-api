@@ -33,7 +33,7 @@
   </style>
   <script>
     // ✅ This URL never changes — your Render.com API
-    const API_URL = "https://stock-prediction-api-rb08.onrender.com";
+    const API_URL = "https://YOUR-APP-NAME.onrender.com";
 
     var myConnector = tableau.makeConnector();
 
@@ -96,23 +96,9 @@
       fetch(API_URL + endpoint, {
         headers: {'Accept': 'application/json'}
       })
-.then(function(data) {
-    var mappedData = data.map(function(row) {
-        return {
-            date:            row["Date"]           || row["date"],
-            stock:           row["Stock"]          || row["stock"],
-            model:           row["Model"]          || row["model"] || "",
-            type:            row["Type"]           || row["type"],
-            actual_close:    row["Actual Close"]   || row["actual_close"],
-            predicted_close: row["Predicted Close"]|| row["predicted_close"],
-            rmse:            row["RMSE"]           || row["rmse"],
-            r2:              row["R2"]             || row["r2"],
-            mape:            row["MAPE"]           || row["mape"]
-        };
-    });
-    table.appendRows(mappedData);
-    doneCallback();
-})
+      .then(function(response) { return response.json(); })
+      .then(function(data) {
+        table.appendRows(data);
         doneCallback();
       })
       .catch(function(err) {
@@ -136,7 +122,7 @@
 <body>
   <h2>📈 Stock Market Predictions</h2>
   <p>Live data from Netflix, Walmart & Apple</p>
-  <p>Powered by XGBoost + yfinance</p>
+  <p>Powered by KNN + Linear Regression + XGBoost + yfinance</p>
   <button onclick="startConnector()">
     Connect Live Data to Tableau
   </button>

@@ -234,73 +234,40 @@ def home():
     })
 
 @app.route('/predictions')
-def get_predictions():
-    try:
-        rows, _ = run_predictions()
-        stock = request.args.get('stock')
-        model = request.args.get('model')
-        if stock:
-            rows = [r for r in rows
-                    if r['Stock'] == stock]
-        if model:
-            rows = [r for r in rows
-                    if r['Model'] == model]
-        response = app.response_class(
-            response=json.dumps(rows),
-            status=200,
-            mimetype='application/json'
-        )
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        return response
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/metrics')
-def get_metrics():
-    try:
-        _, metrics = run_predictions()
-        response = app.response_class(
-            response=json.dumps(metrics),
-            status=200,
-            mimetype='application/json'
-        )
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        return response
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/forecast')
-def get_forecast():
-    try:
-        rows, _ = run_predictions()
-        data = [r for r in rows
-                if r['Type'] == 'Future Forecast']
-        response = app.response_class(
-            response=json.dumps(data),
-            status=200,
-            mimetype='application/json'
-        )
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        return response
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/historical')
-def get_historical():
-    try:
-        rows, _ = run_predictions()
-        data = [r for r in rows
-                if r['Type'] == 'Historical Prediction']
-        response = app.response_class(
-            response=json.dumps(data),
-            status=200,
-            mimetype='application/json'
-        )
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        return response
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+def predictions():
+    results = []
+    
+    for ticker in ['NFLX', 'AAPL', 'WMT']:
+        df = get_stock_data(ticker)
+        df = engineer_features(df)
+        df = df.dropna()
+        
+        X = df[FEATURE_COLS]
+        y = df['Close']
+        
+        # --- Train all 3 models ---
+        from sklearn.neighbors import KNeighborsRegressor
+        from sklearn.linear_model import LinearRegression
+        import xgboost as xgb
+        
+        models = {
+            'XGBoost': xgb.XGBRegressor(n_estimators=100, random_state=42),
+            'LinearRegression': LinearRegression(),
+            'KNN': KNeighborsRegressor(n_neighbors=5)
+        }
+        
+        for model_name, model in models.items():
+            model.fit(X, y)
+            preds = model.predict(X)
+            
+            for i in range(len(df)):
+                results.append({
+                    'Date': df.index[i].strftime('%Y-%m-%d'),
+                    'Stock': ticker,
+                    'Model': model_name,          # ← NEW FIELD
+                    'Type': 'Historical',
+                    'Actual Close': round(float(y.iloc[i]), 2),
+                    'Predicted Close': round(float(preds[i]), 2)
+                })
+    
+    return jsonify(results)

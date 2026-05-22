@@ -72,7 +72,6 @@ def download_stock_data(ticker, start, retries=3):
     """Download with retries and multiple methods"""
     for attempt in range(retries):
         try:
-            # Method 1 — standard download
             df = yf.download(
                 ticker,
                 start=start,
@@ -83,7 +82,6 @@ def download_stock_data(ticker, start, retries=3):
             )
             if len(df) > 100:
                 df.reset_index(inplace=True)
-                # Flatten multi-index columns
                 df.columns = [
                     c[0] if isinstance(c, tuple) else c
                     for c in df.columns
@@ -93,7 +91,6 @@ def download_stock_data(ticker, start, retries=3):
             print(f"Attempt {attempt+1} failed: {e}")
 
         try:
-            # Method 2 — using Ticker object
             t = yf.Ticker(ticker)
             df = t.history(start=start, auto_adjust=True)
             if len(df) > 100:
@@ -102,16 +99,13 @@ def download_stock_data(ticker, start, retries=3):
                     c[0] if isinstance(c, tuple) else c
                     for c in df.columns
                 ]
-                # Rename index to Date if needed
                 if 'index' in df.columns:
-                    df.rename(
-                        columns={'index': 'Date'}, inplace=True
-                    )
+                    df.rename(columns={'index': 'Date'}, inplace=True)
                 return df
         except Exception as e:
             print(f"Method 2 attempt {attempt+1} failed: {e}")
 
-    return pd.DataFrame()  # empty if all fail
+    return pd.DataFrame()
 
 def run_predictions():
     all_rows = []
@@ -120,7 +114,6 @@ def run_predictions():
     for name, ticker in TICKERS.items():
         print(f"\nProcessing {name} ({ticker})...")
 
-        # Download data
         df = download_stock_data(ticker, START_DATE)
 
         if df.empty or len(df) < 200:
@@ -129,17 +122,13 @@ def run_predictions():
 
         print(f"✅ Downloaded {len(df)} rows for {name}")
 
-        # Ensure Date column is datetime
         df['Date'] = pd.to_datetime(df['Date'])
-
-        # Feature engineering
         df = add_features(df)
 
         if len(df) < 100:
             print(f"❌ Not enough rows after feature engineering for {name}")
             continue
 
-        # Train/test split 80/20
         split = int(len(df) * 0.8)
         train = df.iloc[:split]
         test  = df.iloc[split:]
@@ -149,77 +138,99 @@ def run_predictions():
         X_te = test[FEATURES]
         y_te = test['Close']
 
-        # Train XGBoost
-        model = XGBRegressor(
+        # ── XGBoost ──────────────────────────────────────────
+        xgb_model = XGBRegressor(
             n_estimators=200,
             max_depth=5,
             learning_rate=0.1,
             random_state=42,
             verbosity=0
         )
-        model.fit(X_tr, y_tr)
-        y_pred = model.predict(X_te)
+        xgb_model.fit(X_tr, y_tr)
+        xgb_pred = xgb_model.predict(X_te)
 
-        # Metrics
-        rmse = float(np.sqrt(mean_squared_error(y_te, y_pred)))
-        r2   = float(r2_score(y_te, y_pred))
-        mape = float(
-            np.mean(np.abs((y_te.values - y_pred) / y_te.values)) * 100
-        )
+        # ── Linear Regression ────────────────────────────────
+        lr_model = LinearRegression()
+        lr_model.fit(X_tr, y_tr)
+        lr_pred = lr_model.predict(X_te)
 
-        metrics_rows.append({
-            'Stock':    name,
-            'Model':    'XGBoost',
-            'RMSE':     round(rmse, 4),
-            'R2_Score': round(r2, 4),
-            'MAPE_Pct': round(mape, 2)
-        })
+        # ── KNN ──────────────────────────────────────────────
+        knn_model = KNeighborsRegressor(n_neighbors=5)
+        knn_model.fit(X_tr, y_tr)
+        knn_pred = knn_model.predict(X_te)
 
-        # Historical predictions
-        for date, actual, pred in zip(
-            test['Date'].values, y_te.values, y_pred
-        ):
-            all_rows.append({
-                'Date':            pd.Timestamp(date).strftime('%Y-%m-%d'),
-                'Stock':           name,
-                'Type':            'Historical Prediction',
-                'Model':           'XGBoost',
-                'Actual_Close':    round(float(actual), 2),
-                'Predicted_Close': round(float(pred), 2),
-                'RMSE':            round(rmse, 4),
-                'R2':              round(r2, 4),
-                'MAPE':            round(mape, 2),
-                'Last_Updated':    datetime.now().strftime('%Y-%m-%d %H:%M')
+        models_output = [
+            ('XGBoost',           xgb_model, xgb_pred),
+            ('Linear Regression', lr_model,  lr_pred),
+            ('KNN',               knn_model, knn_pred),
+        ]
+
+        for model_name, model_obj, y_pred in models_output:
+            rmse = float(np.sqrt(mean_squared_error(y_te, y_pred)))
+            r2   = float(r2_score(y_te, y_pred))
+            mape = float(
+                np.mean(np.abs((y_te.values - y_pred) / y_te.values)) * 100
+            )
+
+            metrics_rows.append({
+                'Stock':    name,
+                'Model':    model_name,
+                'RMSE':     round(rmse, 4),
+                'R2_Score': round(r2, 4),
+                'MAPE_Pct': round(mape, 2)
             })
 
-        # 30-day future forecast
-        last_row  = df.iloc[-1]
-        last_date = last_row['Date']
-        future_preds = forecast_sklearn(
-            model, last_row, 30, FEATURES
-        )
-        future_dates = pd.bdate_range(
-            start=pd.Timestamp(last_date) + pd.Timedelta(days=1),
-            periods=30
-        )
+            # Historical predictions — ✅ Volume now included
+            for date, actual, pred, vol in zip(
+                test['Date'].values,
+                y_te.values,
+                y_pred,
+                test['Volume'].values          # ← NEW
+            ):
+                all_rows.append({
+                    'Date':            pd.Timestamp(date).strftime('%Y-%m-%d'),
+                    'Stock':           name,
+                    'Type':            'Historical Prediction',
+                    'Model':           model_name,
+                    'Actual_Close':    round(float(actual), 2),
+                    'Predicted_Close': round(float(pred), 2),
+                    'Volume':          int(vol),                # ← NEW
+                    'RMSE':            round(rmse, 4),
+                    'R2':              round(r2, 4),
+                    'MAPE':            round(mape, 2),
+                    'Last_Updated':    datetime.now().strftime('%Y-%m-%d %H:%M')
+                })
 
-        for date, pred in zip(future_dates, future_preds):
-            all_rows.append({
-                'Date':            str(date.date()),
-                'Stock':           name,
-                'Type':            'Future Forecast',
-                'Model':           'XGBoost',
-                'Actual_Close':    0,
-                'Predicted_Close': round(float(pred), 2),
-                'RMSE':            round(rmse, 4),
-                'R2':              round(r2, 4),
-                'MAPE':            round(mape, 2),
-                'Last_Updated':    datetime.now().strftime('%Y-%m-%d %H:%M')
-            })
+            # 30-day future forecast
+            last_row  = df.iloc[-1]
+            last_date = last_row['Date']
+            future_preds = forecast_sklearn(model_obj, last_row, 30, FEATURES)
+            future_dates = pd.bdate_range(
+                start=pd.Timestamp(last_date) + pd.Timedelta(days=1),
+                periods=30
+            )
+
+            avg_volume = int(df['Volume'].tail(30).mean())  # ← rolling avg for forecast
+
+            for date, pred in zip(future_dates, future_preds):
+                all_rows.append({
+                    'Date':            str(date.date()),
+                    'Stock':           name,
+                    'Type':            'Future Forecast',
+                    'Model':           model_name,
+                    'Actual_Close':    0,
+                    'Predicted_Close': round(float(pred), 2),
+                    'Volume':          avg_volume,             # ← 30-day rolling avg
+                    'RMSE':            round(rmse, 4),
+                    'R2':              round(r2, 4),
+                    'MAPE':            round(mape, 2),
+                    'Last_Updated':    datetime.now().strftime('%Y-%m-%d %H:%M')
+                })
 
         print(f"✅ {name} done — {len(all_rows)} total rows so far")
 
     return all_rows, metrics_rows
+
 
 # ── Endpoints ──────────────────────────────────────
 
@@ -285,8 +296,7 @@ def get_forecast():
 def get_historical():
     try:
         rows, _ = run_predictions()
-        data = [r for r in rows
-                if r['Type'] == 'Historical Prediction']
+        data = [r for r in rows if r['Type'] == 'Historical Prediction']
         response = app.response_class(
             response=json.dumps(data),
             status=200,

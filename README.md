@@ -118,8 +118,8 @@ python app.py
 
 ```bash
 # Clone the repo
-git clone https://github.com/Prabhjotk13/stock-prediction-api.git
-cd stock-prediction-api
+git clone https://github.com/Prabhjotk13/stock-price-predictor
+cd stock-price-predictor
 
 # Install dependencies
 pip install -r requirements.txt

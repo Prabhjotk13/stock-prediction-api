@@ -6,9 +6,11 @@ An end-to-end data science project that predicts stock prices for **Apple, Netfl
 
 ## 🖥️ Live Dashboard
 
-🔗 [View on Tableau Public](https://public.tableau.com/app/profile/prabhjot.kaur4890/viz/StockMarketPredictionDashboard/Dashboard2)
+🔗 [View on Tableau Public](https://public.tableau.com/app/profile/prabhjot.kaur4890/viz/StockMarketPredictionDashboard/Dashboard1)
 
-![Dashboard Preview](tableau-dashboard-preview.png)
+![Dashboard Preview]<img width="1223" height="515" alt="Tableau-dashboard1-preview" src="https://github.com/user-attachments/assets/fd19c445-5f1e-4179-a122-698ec88f1f50" />
+<img width="1022" height="421" alt="Tableau-dashboard2-preview" src="https://github.com/user-attachments/assets/7a129534-7b76-413c-bb90-0680320a3afc" />
+
 
 ---
 
